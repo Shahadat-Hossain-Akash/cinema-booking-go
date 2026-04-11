@@ -1,0 +1,16 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+  redis-commander:
+    image: ghcr.io/joeferner/redis-commander:latest
+    hostname: redis-commander
+    user: "redis"
+    container_name: redis-commander
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
