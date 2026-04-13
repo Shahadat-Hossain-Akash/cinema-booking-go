@@ -1,6 +1,7 @@
 package booking
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,7 +12,8 @@ import (
 )
 
 func TestConcurrentStoreExactlyOneWin(t *testing.T) {
-	store := NewRedisStore(redis.NewClient("localhost:6379"))
+	rc := redis.NewClient("localhost:6379")
+	store := NewRedisStore(rc)
 	service := NewService(store)
 
 	const numGoroutines = 100_000
@@ -23,6 +25,12 @@ func TestConcurrentStoreExactlyOneWin(t *testing.T) {
 	)
 
 	wg.Add(numGoroutines)
+
+	seatKey := "seat:movie1:A1"
+	rc.Del(context.Background(), seatKey)
+	t.Cleanup(func() {
+		rc.Del(context.Background(), seatKey)
+	})
 
 	for i := range numGoroutines {
 		go func(i int) {
