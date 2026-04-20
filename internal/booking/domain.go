@@ -12,6 +12,20 @@ var (
 	ErrSeatAlreadyBooked = errors.New("seat already booked")
 )
 
+type MovieResponse struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Rows        int    `json:"rows"`
+	SeatsPerRow int    `json:"seats_per_row"`
+	TotalSeats  int    `json:"total_seats"`
+}
+type seatInfo struct {
+	SeatID    string `json:"seat_id"`
+	UserID    string `json:"user_id"`
+	Booked    bool   `json:"booked"`
+	Confirmed bool   `json:"confirmed"`
+}
+
 type Booking struct {
 	ID        string    `json:"id"`
 	MovieID   string    `json:"movie_id"`
