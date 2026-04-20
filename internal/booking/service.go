@@ -25,3 +25,7 @@ func (s *Service) Confirm(ctx context.Context, sessionID string, userID string) 
 func (s *Service) Release(ctx context.Context, sessionID string, userID string) error {
 	return s.store.Release(ctx, sessionID, userID)
 }
+
+// func (s *Service) CleanupExpiredBookings(ctx context.Context) (int64, error) {
+// 	return s.store.CleanupExpiredBookings(ctx)
+// }

@@ -40,4 +40,5 @@ type BookingStore interface {
 	ListBookings(movieID string) ([]Booking, error)
 	Confirm(ctx context.Context, sessionID string, userID string) (Booking, error)
 	Release(ctx context.Context, sessionID string, userID string) error
+	// CleanupExpiredBookings(ctx context.Context) (int64, error)
 }

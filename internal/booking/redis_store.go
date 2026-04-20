@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	defaultHoldTTL = 2 * time.Minute
+	defaultHoldTTL     = 2 * time.Minute
+	pendingSessionsKey = "pending_sessions"
 )
 
 type RedisStore struct {
@@ -91,6 +92,12 @@ func (s *RedisStore) hold(b Booking) (Booking, error) {
 	if err := s.rdb.Set(s.ctx, sessionKey(id), key, defaultHoldTTL).Err(); err != nil {
 		s.rdb.Del(s.ctx, key) // rollback seat lock
 		return Booking{}, fmt.Errorf("hold: set session key: %w", err)
+	}
+
+	// Track this session in pending_sessions set for efficient cleanup
+	if err := s.rdb.SAdd(s.ctx, "pending_sessions", id).Err(); err != nil {
+		log.Printf("hold: warning - failed to add session to pending set: %v", err)
+		// Don't fail the hold operation if tracking fails
 	}
 
 	return Booking{
@@ -173,6 +180,11 @@ func (s *RedisStore) Confirm(ctx context.Context, sessionID string, userID strin
 
 	log.Printf("Booking confirmed: %s for movie %s, seat %s", booking.ID, booking.MovieID, booking.SeatID)
 
+	// Remove from pending_sessions since it's confirmed
+	if err := s.rdb.SRem(ctx, "pending_sessions", sessionID).Err(); err != nil {
+		log.Printf("confirm: warning - failed to remove session from pending set: %v", err)
+	}
+
 	return booking, nil
 }
 
@@ -186,5 +198,80 @@ func (s *RedisStore) Release(ctx context.Context, sessionID string, userID strin
 		return fmt.Errorf("release: delete keys: %w", err)
 	}
 
+	// Remove from pending_sessions
+	if err := s.rdb.SRem(ctx, "pending_sessions", sessionID).Err(); err != nil {
+		log.Printf("release: warning - failed to remove session from pending set: %v", err)
+	}
+
+	log.Printf("Booking released: %s for user %s", sessionID, userID)
 	return nil
+}
+
+// CleanupExpiredBookings removes any expired hold sessions
+func (s *RedisStore) CleanupExpiredBookings(ctx context.Context) (int64, error) {
+	sessions, err := s.rdb.SMembers(ctx, pendingSessionsKey).Result()
+	if err != nil {
+		return 0, fmt.Errorf("cleanup: failed to get pending sessions: %w", err)
+	}
+
+	var deletedCount int64
+	for _, sessionID := range sessions {
+		cleaned, err := s.cleanupSession(ctx, sessionID)
+		if err != nil {
+			log.Printf("cleanup: session %s: %v", sessionID, err)
+			continue
+		}
+		if cleaned {
+			deletedCount++
+			log.Printf("cleanup: removed expired session %s", sessionID)
+		}
+	}
+
+	return deletedCount, nil
+}
+
+// cleanupSession inspects a single session and removes it if expired.
+// Returns true if the session was cleaned up.
+func (s *RedisStore) cleanupSession(ctx context.Context, sessionID string) (bool, error) {
+	seatKey, err := s.rdb.Get(ctx, sessionKey(sessionID)).Result()
+	if errors.Is(err, redis.Nil) {
+		// Session key expired naturally — just remove from the tracking set.
+		return s.removePendingSession(ctx, sessionID)
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading session key: %w", err)
+	}
+
+	exists, err := s.rdb.Exists(ctx, seatKey).Result()
+	if err != nil {
+		return false, fmt.Errorf("checking seat key %s: %w", seatKey, err)
+	}
+
+	if exists > 0 {
+		return false, nil // Seat still held — nothing to do.
+	}
+
+	// Seat key is gone but session key lingers — delete both atomically.
+	return s.removeOrphanedSession(ctx, sessionID)
+}
+
+// removePendingSession removes a naturally-expired session from the tracking set.
+func (s *RedisStore) removePendingSession(ctx context.Context, sessionID string) (bool, error) {
+	if err := s.rdb.SRem(ctx, pendingSessionsKey, sessionID).Err(); err != nil {
+		return false, fmt.Errorf("removing session from pending set: %w", err)
+	}
+	return true, nil
+}
+
+// removeOrphanedSession deletes a session whose seat key no longer exists.
+func (s *RedisStore) removeOrphanedSession(ctx context.Context, sessionID string) (bool, error) {
+	_, err := s.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, sessionKey(sessionID))
+		pipe.SRem(ctx, pendingSessionsKey, sessionID)
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("deleting orphaned session: %w", err)
+	}
+	return true, nil
 }
