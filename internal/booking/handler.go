@@ -2,6 +2,7 @@ package booking
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"movie-booking-go/internal/utils"
 	"net/http"
@@ -165,10 +166,11 @@ func (h *Handler) ReleaseSeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing user_id in request body", http.StatusBadRequest)
 		return
 	}
-	if err := h.service.Release(r.Context(), sessionID, req.UserID); err != nil {
+	booking, err := h.service.Release(r.Context(), sessionID, req.UserID)
+	if err != nil {
 		log.Println(err)
 		http.Error(w, "Failed to release booking", http.StatusInternalServerError)
 		return
 	}
-	utils.WriteJSON(w, http.StatusOK, map[string]string{"message": "Booking released successfully"})
+	utils.WriteJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Booking release successfully for %s", booking.SeatID)})
 }

@@ -22,7 +22,7 @@ func (s *Service) Confirm(ctx context.Context, sessionID string, userID string) 
 	return s.store.Confirm(ctx, sessionID, userID)
 }
 
-func (s *Service) Release(ctx context.Context, sessionID string, userID string) error {
+func (s *Service) Release(ctx context.Context, sessionID string, userID string) (Booking, error) {
 	return s.store.Release(ctx, sessionID, userID)
 }
 

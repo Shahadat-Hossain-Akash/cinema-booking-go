@@ -188,14 +188,14 @@ func (s *RedisStore) Confirm(ctx context.Context, sessionID string, userID strin
 	return booking, nil
 }
 
-func (s *RedisStore) Release(ctx context.Context, sessionID string, userID string) error {
-	_, sk, err := s.getSession(ctx, sessionID, userID)
+func (s *RedisStore) Release(ctx context.Context, sessionID string, userID string) (Booking, error) {
+	booking, sk, err := s.getSession(ctx, sessionID, userID)
 	if err != nil {
-		return err
+		return Booking{}, err
 	}
 
 	if err := s.rdb.Del(ctx, sk, sessionKey(sessionID)).Err(); err != nil {
-		return fmt.Errorf("release: delete keys: %w", err)
+		return Booking{}, fmt.Errorf("release: delete keys: %w", err)
 	}
 
 	// Remove from pending_sessions
@@ -204,7 +204,7 @@ func (s *RedisStore) Release(ctx context.Context, sessionID string, userID strin
 	}
 
 	log.Printf("Booking released: %s for user %s", sessionID, userID)
-	return nil
+	return booking, nil
 }
 
 // CleanupExpiredBookings removes any expired hold sessions
