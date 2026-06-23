@@ -12,6 +12,22 @@ var (
 	ErrSeatAlreadyBooked = errors.New("seat already booked")
 )
 
+type EventType string
+
+const (
+	EventSeatHeld      EventType = "seat.held"
+	EventSeatReleased  EventType = "seat.released"
+	EventSeatConfirmed EventType = "seat.confirmed"
+	EventSeatExpired   EventType = "seat.expired"
+)
+
+type SeatEvent struct {
+	Type    EventType `json:"type"`
+	MovieID string    `json:"movie_id"`
+	SeatID  string    `json:"seat_id"`
+	UserID  string    `json:"user_id"`
+}
+
 type MovieResponse struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
@@ -36,9 +52,11 @@ type Booking struct {
 }
 
 type BookingStore interface {
-	CreateBooking(b Booking) (Booking, error)
-	ListBookings(movieID string) ([]Booking, error)
+	CreateBooking(ctx context.Context, b Booking) (Booking, error)
+	ListBookings(ctx context.Context, movieID string) ([]Booking, error)
 	Confirm(ctx context.Context, sessionID string, userID string) (Booking, error)
 	Release(ctx context.Context, sessionID string, userID string) (Booking, error)
-	// CleanupExpiredBookings(ctx context.Context) (int64, error)
+	Subscribe(ctx context.Context, channel string) <-chan string
+	PublishSeatEvent(ctx context.Context, e SeatEvent) error
+	CleanupExpiredBookings(ctx context.Context) (int64, error)
 }

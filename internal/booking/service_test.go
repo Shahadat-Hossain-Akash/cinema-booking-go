@@ -41,7 +41,7 @@ func TestConcurrentStoreExactlyOneWin(t *testing.T) {
 				SeatID:  "A1",
 				UserID:  uuid.New().String(),
 			}
-			_, err := service.CreateBooking(booking)
+			_, err := service.CreateBooking(context.Background(), booking)
 			if err == nil {
 				success.Add(1)
 			} else {

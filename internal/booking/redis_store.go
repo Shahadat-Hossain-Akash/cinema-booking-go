@@ -15,29 +15,29 @@ import (
 const (
 	defaultHoldTTL     = 2 * time.Minute
 	pendingSessionsKey = "pending_sessions"
+	RedisSeatEvents    = "seat_events"
 )
 
 type RedisStore struct {
 	rdb *redis.Client
-	ctx context.Context
 }
 
 func NewRedisStore(rdb *redis.Client) *RedisStore {
-	return &RedisStore{rdb: rdb, ctx: context.Background()}
+	return &RedisStore{rdb: rdb}
 }
 
 func sessionKey(id string) string {
 	return fmt.Sprintf("session:%s", id)
 }
 
-func (s *RedisStore) ListBookings(movieID string) ([]Booking, error) {
+func (s *RedisStore) ListBookings(ctx context.Context, movieID string) ([]Booking, error) {
 	pattern := fmt.Sprintf("seat:%s:*", movieID)
 
 	var bookings []Booking
 
-	iter := s.rdb.Scan(s.ctx, 0, pattern, 0).Iterator()
-	for iter.Next(s.ctx) {
-		val, err := s.rdb.Get(s.ctx, iter.Val()).Result()
+	iter := s.rdb.Scan(ctx, 0, pattern, 0).Iterator()
+	for iter.Next(ctx) {
+		val, err := s.rdb.Get(ctx, iter.Val()).Result()
 		if err != nil {
 			continue
 		}
@@ -68,7 +68,7 @@ func parseSession(val string) (Booking, error) {
 	}, nil
 }
 
-func (s *RedisStore) hold(b Booking) (Booking, error) {
+func (s *RedisStore) hold(ctx context.Context, b Booking) (Booking, error) {
 	id := uuid.New().String()
 	now := time.Now()
 	key := fmt.Sprintf("seat:%s:%s", b.MovieID, b.SeatID)
@@ -76,7 +76,7 @@ func (s *RedisStore) hold(b Booking) (Booking, error) {
 	b.ID = id
 	val, _ := json.Marshal(b)
 
-	res := s.rdb.SetArgs(s.ctx, key, val, redis.SetArgs{
+	res := s.rdb.SetArgs(ctx, key, val, redis.SetArgs{
 		TTL:  defaultHoldTTL,
 		Mode: "NX",
 	})
@@ -89,13 +89,13 @@ func (s *RedisStore) hold(b Booking) (Booking, error) {
 		return Booking{}, ErrSeatAlreadyBooked
 	}
 
-	if err := s.rdb.Set(s.ctx, sessionKey(id), key, defaultHoldTTL).Err(); err != nil {
-		s.rdb.Del(s.ctx, key) // rollback seat lock
+	if err := s.rdb.Set(ctx, sessionKey(id), key, defaultHoldTTL).Err(); err != nil {
+		s.rdb.Del(ctx, key) // rollback seat lock
 		return Booking{}, fmt.Errorf("hold: set session key: %w", err)
 	}
 
 	// Track this session in pending_sessions set for efficient cleanup
-	if err := s.rdb.SAdd(s.ctx, "pending_sessions", id).Err(); err != nil {
+	if err := s.rdb.SAdd(ctx, "pending_sessions", id).Err(); err != nil {
 		log.Printf("hold: warning - failed to add session to pending set: %v", err)
 		// Don't fail the hold operation if tracking fails
 	}
@@ -110,8 +110,8 @@ func (s *RedisStore) hold(b Booking) (Booking, error) {
 	}, nil
 }
 
-func (s *RedisStore) CreateBooking(b Booking) (Booking, error) {
-	session, err := s.hold(b)
+func (s *RedisStore) CreateBooking(ctx context.Context, b Booking) (Booking, error) {
+	session, err := s.hold(ctx, b)
 
 	if err != nil {
 		return Booking{}, err
@@ -274,4 +274,38 @@ func (s *RedisStore) removeOrphanedSession(ctx context.Context, sessionID string
 		return false, fmt.Errorf("deleting orphaned session: %w", err)
 	}
 	return true, nil
+}
+
+func (r *RedisStore) PublishSeatEvent(ctx context.Context, e SeatEvent) error {
+	data, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+
+	return r.rdb.Publish(ctx, RedisSeatEvents, data).Err()
+}
+
+func (r *RedisStore) Subscribe(ctx context.Context, channel string) <-chan string {
+	out := make(chan string, 64)
+
+	go func() {
+		defer close(out)
+
+		sub := r.rdb.Subscribe(ctx, channel)
+
+		defer sub.Close()
+
+		for msg := range sub.Channel() {
+			select {
+			case <-ctx.Done():
+				return
+			case out <- msg.Payload:
+			default:
+				log.Println("[sse] subscriber buffer full, dropping message")
+			}
+		}
+
+	}()
+
+	return out
 }

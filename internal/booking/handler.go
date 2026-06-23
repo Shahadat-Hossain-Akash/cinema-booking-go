@@ -1,6 +1,7 @@
 package booking
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -36,6 +37,19 @@ func NewHandler(s *Service) *Handler {
 	return &Handler{service: s}
 }
 
+func (h *Handler) ServeSSE(broker *Broker) http.HandlerFunc {
+	return broker.ServeSSE
+}
+
+func (h *Handler) emit(r *http.Request, e SeatEvent) {
+	// Publish event asynchronously to avoid blocking the response
+	go func() {
+		if err := h.service.PublishSeatEvent(context.Background(), e); err != nil {
+			log.Printf("[sse] failed to publish %s event: %v", e.Type, err)
+		}
+	}()
+}
+
 func (h *Handler) ListMovies(w http.ResponseWriter, r *http.Request) {
 	movie := []MovieResponse{
 		{ID: "1", Title: "Inception", Rows: 5, SeatsPerRow: 10, TotalSeats: 50},
@@ -52,7 +66,7 @@ func (h *Handler) ListBookings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bookings, err := h.service.ListBookings(movieID)
+	bookings, err := h.service.ListBookings(r.Context(), movieID)
 	if err != nil {
 		http.Error(w, "Failed to list bookings", http.StatusInternalServerError)
 		return
@@ -98,9 +112,14 @@ func (h *Handler) HoldSeat(w http.ResponseWriter, r *http.Request) {
 		UserID:  req.UserID,
 	}
 
-	booking, err := h.service.CreateBooking(payload)
+	booking, err := h.service.CreateBooking(r.Context(), payload)
 	if err != nil {
 		log.Println(err)
+		if err == ErrSeatAlreadyBooked {
+			http.Error(w, "Seat already booked", http.StatusConflict)
+		} else {
+			http.Error(w, "Failed to hold seat", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -110,6 +129,13 @@ func (h *Handler) HoldSeat(w http.ResponseWriter, r *http.Request) {
 		SeatID:    seatID,
 		ExpiresAt: booking.ExpiresAt.Format(time.RFC3339),
 	}
+
+	h.emit(r, SeatEvent{
+		Type:    EventSeatHeld,
+		MovieID: movieID,
+		SeatID:  seatID,
+		UserID:  req.UserID,
+	})
 
 	utils.WriteJSON(w, http.StatusCreated, res)
 
@@ -147,6 +173,13 @@ func (h *Handler) ConfirmSeat(w http.ResponseWriter, r *http.Request) {
 		Status:    booking.Status,
 	}
 
+	h.emit(r, SeatEvent{
+		Type:    EventSeatConfirmed,
+		MovieID: booking.MovieID,
+		SeatID:  booking.SeatID,
+		UserID:  booking.UserID,
+	})
+
 	utils.WriteJSON(w, http.StatusAccepted, res)
 
 }
@@ -172,5 +205,13 @@ func (h *Handler) ReleaseSeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to release booking", http.StatusInternalServerError)
 		return
 	}
+
+	h.emit(r, SeatEvent{
+		Type:    EventSeatReleased,
+		MovieID: booking.MovieID,
+		SeatID:  booking.SeatID,
+		UserID:  booking.UserID,
+	})
+
 	utils.WriteJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Booking release successfully for %s", booking.SeatID)})
 }

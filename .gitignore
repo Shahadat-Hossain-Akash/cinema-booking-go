@@ -43,3 +43,9 @@ coverage.out
 # Temporary files
 *.tmp
 *.temp
+
+# Analysis markdown files (case insensitive)
+*analysis*.md
+*ANALYSIS*.md
+
+#
