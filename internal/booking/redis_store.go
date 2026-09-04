@@ -60,11 +60,12 @@ func parseSession(val string) (Booking, error) {
 		return Booking{}, err
 	}
 	return Booking{
-		ID:      b.ID,
-		MovieID: b.MovieID,
-		UserID:  b.UserID,
-		SeatID:  b.SeatID,
-		Status:  b.Status,
+		ID:        b.ID,
+		MovieID:   b.MovieID,
+		UserID:    b.UserID,
+		SeatID:    b.SeatID,
+		Status:    b.Status,
+		ExpiresAt: b.ExpiresAt,
 	}, nil
 }
 
@@ -74,6 +75,8 @@ func (s *RedisStore) hold(ctx context.Context, b Booking) (Booking, error) {
 	key := fmt.Sprintf("seat:%s:%s", b.MovieID, b.SeatID)
 
 	b.ID = id
+	b.Status = "held"
+	b.ExpiresAt = now.Add(defaultHoldTTL)
 	val, _ := json.Marshal(b)
 
 	res := s.rdb.SetArgs(ctx, key, val, redis.SetArgs{
@@ -100,14 +103,7 @@ func (s *RedisStore) hold(ctx context.Context, b Booking) (Booking, error) {
 		// Don't fail the hold operation if tracking fails
 	}
 
-	return Booking{
-		ID:        id,
-		MovieID:   b.MovieID,
-		UserID:    b.UserID,
-		SeatID:    b.SeatID,
-		Status:    "held",
-		ExpiresAt: now.Add(defaultHoldTTL),
-	}, nil
+	return b, nil
 }
 
 func (s *RedisStore) CreateBooking(ctx context.Context, b Booking) (Booking, error) {
