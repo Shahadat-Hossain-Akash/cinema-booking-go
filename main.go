@@ -11,23 +11,33 @@ import (
 
 	"movie-booking-go/internal/booking"
 	"net/http"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
 
-// corsMiddleware sets CORS headers for the configured frontend origin and
-// short-circuits preflight OPTIONS requests. Browsers send preflight for
-// POST/PUT/DELETE with a JSON body, and EventSource (SSE) is cross-origin
-// too, so this wraps the whole mux rather than individual routes.
-func corsMiddleware(next http.Handler, allowedOrigin string) http.Handler {
+//	the request's Origin header is checked against an exact match
+//
+// (production domain) or a suffix match (allowedOriginSuffix) — needed
+// because Vercel gives every preview deployment a distinct random URL, so a
+// single static allowed origin can never cover all of them. The matched
+// origin is echoed back rather than a fixed string, per standard practice
+// for supporting multiple allowed origins.
+func corsMiddleware(next http.Handler, allowedOrigin, allowedOriginSuffix string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		if allowedOrigin == "*" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else {
+			origin := r.Header.Get("Origin")
+			if origin != "" && (origin == allowedOrigin || (allowedOriginSuffix != "" && strings.HasSuffix(origin, allowedOriginSuffix))) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Add("Vary", "Origin")
+			}
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		if allowedOrigin != "*" {
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-		}
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -96,6 +106,7 @@ func main() {
 	}
 
 	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
+	allowedOriginSuffix := os.Getenv("ALLOWED_ORIGIN_SUFFIX")
 	if allowedOrigin == "" {
 		allowedOrigin = "*"
 		log.Println("ALLOWED_ORIGIN not set, allowing all origins (fine for local dev, set explicitly in production)")
@@ -103,7 +114,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: corsMiddleware(mux, allowedOrigin),
+		Handler: corsMiddleware(mux, allowedOrigin, allowedOriginSuffix),
 	}
 
 	// Start server in a goroutine
