@@ -4,19 +4,49 @@ import (
 	"context"
 	"log"
 	"movie-booking-go/internal/adapters/redis"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"movie-booking-go/internal/booking"
 	"net/http"
+
+	"github.com/joho/godotenv"
 )
 
+// corsMiddleware sets CORS headers for the configured frontend origin and
+// short-circuits preflight OPTIONS requests. Browsers send preflight for
+// POST/PUT/DELETE with a JSON body, and EventSource (SSE) is cross-origin
+// too, so this wraps the whole mux rather than individual routes.
+func corsMiddleware(next http.Handler, allowedOrigin string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Println(".env not found, using existing environment variables")
+	}
 
 	mux := http.NewServeMux()
 
-	rs := redis.NewClient("localhost:6379")
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		log.Fatal("REDIS_URL is required")
+	}
+
+	rs := redis.NewClient(redisURL)
 	defer rs.Close()
 
 	store := booking.NewRedisStore(rs)
@@ -56,9 +86,20 @@ func main() {
 		}
 	}()
 
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
+	if allowedOrigin == "" {
+		allowedOrigin = "*"
+		log.Println("ALLOWED_ORIGIN not set, allowing all origins (fine for local dev, set explicitly in production)")
+	}
+
 	server := &http.Server{
-		Addr:    ":8080",
-		Handler: mux,
+		Addr:    ":" + port,
+		Handler: corsMiddleware(mux, allowedOrigin),
 	}
 
 	// Start server in a goroutine

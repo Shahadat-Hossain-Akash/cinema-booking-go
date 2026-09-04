@@ -1,0 +1,6 @@
+.git
+.idea
+*.md
+docker-compose.yaml
+vercel.json
+api/
